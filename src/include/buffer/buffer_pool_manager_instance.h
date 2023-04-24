@@ -168,6 +168,9 @@ class BufferPoolManagerInstance : public BufferPoolManager {
    */
   auto AllocatePage() -> page_id_t;
 
+  // 自定义函数-找到空闲frame_id
+  auto AvailableFrame(frame_id_t *out_frame_id) -> bool;
+
   /**
    * @brief Deallocate a page on disk. Caller should acquire the latch before calling this function.
    * @param page_id id of the page to deallocate
