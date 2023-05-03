@@ -37,9 +37,10 @@ auto NestIndexJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   RID emit_rid{};
   std::vector<Value> val{};
   while (child_->Next(&left_tuple, &emit_rid)) {
+    // Use key_predicate_ to construct the index probe
     Value value = plan_->key_predicate_->Evaluate(&left_tuple, child_->GetOutputSchema());
     std::vector<RID> rids{};
-    // scankey怎么用诶
+    // Find the corresponding RIDs in the b+ tree
     tree_->ScanKey(Tuple{{value}, index_info_->index_->GetKeySchema()}, &rids, exec_ctx_->GetTransaction());
 
     Tuple right_tuple{};
