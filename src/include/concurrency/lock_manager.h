@@ -17,6 +17,7 @@
 #include <list>
 #include <memory>
 #include <mutex>  // NOLINT
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -64,7 +65,7 @@ class LockManager {
   class LockRequestQueue {
    public:
     /** List of lock requests for the same resource (table or row) */
-    std::list<LockRequest *> request_queue_;
+    std::list<std::shared_ptr<LockRequest>> request_queue_;
     /** For notifying blocked transactions on this rid */
     std::condition_variable cv_;
     /** txn_id of an upgrading transaction (if any) */
@@ -296,6 +297,50 @@ class LockManager {
    * Runs cycle detection in the background.
    */
   auto RunCycleDetection() -> void;
+  auto GrantLock(const std::shared_ptr<LockRequest> &lock_request,
+                 const std::shared_ptr<LockRequestQueue> &lock_request_queue) -> bool;
+  void ChangeTableLockSet(Transaction *txn, const std::shared_ptr<LockRequest> &lock_request, bool insert);
+  void ChangeRowLockSet(Transaction *txn, const std::shared_ptr<LockRequest> &lock_request, bool insert);
+  void InsertRowLockSet(const std::shared_ptr<std::unordered_map<table_oid_t, std::unordered_set<RID>>> &lock_set,
+                        const table_oid_t &oid, const RID &rid) {
+    auto row_lock_set = lock_set->find(oid);
+    if (row_lock_set == lock_set->end()) {
+      lock_set->emplace(oid, std::unordered_set<RID>{});
+      row_lock_set = lock_set->find(oid);
+    }
+    row_lock_set->second.emplace(rid);
+  }
+
+  void DeleteRowLockSet(const std::shared_ptr<std::unordered_map<table_oid_t, std::unordered_set<RID>>> &lock_set,
+                        const table_oid_t &oid, const RID &rid) {
+    auto row_lock_set = lock_set->find(oid);
+    if (row_lock_set == lock_set->end()) {
+      return;
+    }
+    row_lock_set->second.erase(rid);
+  }
+
+  auto Dfs(txn_id_t txn_id) -> bool {
+    if (no_loop_set_.find(txn_id) != no_loop_set_.end()) {
+      return false;
+    }
+    check_set_.insert(txn_id);
+    std::vector<txn_id_t> wait_txn_id = waits_for_[txn_id];
+    std::sort(wait_txn_id.begin(), wait_txn_id.end());
+
+    for (auto it : wait_txn_id) {
+      if (check_set_.find(it) != check_set_.end()) {
+        return true;
+      }
+      if (Dfs(it)) {
+        return true;
+      }
+    }
+
+    check_set_.erase(txn_id);
+    no_loop_set_.insert(txn_id);
+    return false;
+  }
 
  private:
   /** Fall 2022 */
@@ -314,6 +359,11 @@ class LockManager {
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
   std::mutex waits_for_latch_;
+  std::set<txn_id_t> txn_set_;
+  std::unordered_set<txn_id_t> check_set_;
+  std::unordered_set<txn_id_t> no_loop_set_;
+  std::unordered_map<txn_id_t, table_oid_t> tid_oid_map_;
+  std::unordered_map<txn_id_t, RID> tid_rid_map_;
 };
 
 }  // namespace bustub
